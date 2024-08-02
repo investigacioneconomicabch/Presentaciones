@@ -1,0 +1,1414 @@
+---
+title: "Estadísticas de Remesas"
+# subtitle: "2017-2022"
+author: "Elvis Casco"
+institute: "Banco Central de Honduras"
+execute:
+  echo: false
+crossref:
+  fig-title: Gráfico     # (default is "Figure")
+  tbl-title: Tabla     # (default is "Table")
+  fig-prefix: Gráfico   # (default is "Figure")
+  tbl-prefix: Tabla    # (default is "Table")
+# format:
+#   html:
+#     echo: false
+#     toc: true
+#     code-fold: false
+#     warnings: false
+# format:
+#  html:
+#    logo: logo.png
+#    toc: true
+format:
+    revealjs:
+        logo: logo_negro_15x15.png
+        # toc: true
+jupyter: python3
+# engine: knitr
+---
+
+```{python}
+# %pip install --upgrade nbformat
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly
+import plotly.express as px
+import plotly.figure_factory as ff
+import plotly.graph_objects as go
+import polars as pl
+import polars.selectors as cs
+import seaborn as sns
+import seaborn_polars as snl
+import statistics
+import time
+import wbgapi as wb
+
+from datetime import datetime
+from great_tables import GT, md, html, style, loc
+from IPython.display import display, Latex
+from plotly.subplots import make_subplots
+wd = "//srvfs02/IE/Departamento/Balcam/Resultados/Years/"
+```
+
+## Remesas en CARD
+
+```{python}
+#| label: fig-1
+#| fig-cap: Remesas en CARD, Millones de USD. *Guatemala, República Dominicana, Honduras y El Salvador son los países de Centroamérica que recibieron más remesas.[BM](https://data.worldbank.org/indicator/BX.TRF.PWKR.CD.DT?end=2022&start=2022&view=map)*
+#| warning: false
+
+wb.economy.coder(['Mexico', 'Guatemala', 'Dominican Republic', 'Honduras', 'El Salvador', 'Nicaragua','Costa Rica','Venezuela'])
+wb.series.info('BX.TRF.PWKR.CD.DT')           # Personal remittances, received (current US$)
+wb.economy.info(['MEX','GTM','DOM','HND','SLV','NIC','CRI','VEN'])     # Countries
+# df = wb.data.DataFrame(
+#     ['BX.TRF.PWKR.CD.DT'],
+#     ['MEX','GTM','DOM','HND','SLV','NIC','CRI'], 
+#     mrv=32) # most recent 5 years 
+df = wb.data.DataFrame(
+    ['BX.TRF.PWKR.CD.DT'],
+    ['MEX','GTM','DOM','HND','SLV','NIC','CRI'],
+    time=range(1995, 2023), 
+    skipBlanks=False, 
+    columns='series').reset_index()
+df = pl.DataFrame(df).rename(
+        {"economy": "Country",
+        "time": "Years",
+        "BX.TRF.PWKR.CD.DT": "Millones_USD"}
+    ).with_columns(
+        pl.col('Years').str.replace('YR','')
+    ).pivot(
+        index="Years", 
+        columns="Country", 
+        values="Millones_USD", 
+        aggregate_function="sum"
+    )
+df
+
+fig = go.Figure()
+for col in range(1,df.width):
+    fig.add_trace(go.Scatter(
+        x=df["Years"], 
+        y=df[df.columns[col]],
+        name = df.columns[col],
+        mode = 'markers+lines',
+        line=dict(shape='linear'),
+        connectgaps=True))
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Remesas por Año: Millones de USD'
+    )
+fig.update_layout(legend=dict(
+    yanchor="top",
+    y=0.99,
+    xanchor="left",
+    x=0.01))
+fig
+```
+
+---
+
+```{python}
+#| label: fig-2
+#| fig-cap: Remesas en CARD respecto a PIB. *La contribución de las remesas a la economía en estos países es significativa. En 2022, Honduras ocupa el primer lugar, seguido de El Salvador, Nicaragua y Guatemala.[BM](https://data.worldbank.org/indicator/BX.TRF.PWKR.DT.GD.ZS?view=map)*
+#| warning: false
+
+wb.series.info('BX.TRF.PWKR.DT.GD.ZS')           # Personal remittances, received (% of GDP)
+df = wb.data.DataFrame(
+    ['BX.TRF.PWKR.DT.GD.ZS'],
+    ['MEX','GTM','DOM','HND','SLV','NIC','CRI'],
+    time=range(1995, 2023), 
+    skipBlanks=False, 
+    columns='series').reset_index()
+df = pl.DataFrame(df).rename(
+        {"economy": "Country",
+        "time": "Years",
+        "BX.TRF.PWKR.DT.GD.ZS": "%_PIB"}
+    ).with_columns(
+        pl.col('Years').str.replace('YR','')
+    ).pivot(
+        index="Years", 
+        columns="Country", 
+        values="%_PIB", 
+        aggregate_function="sum"
+    )
+df
+
+fig = go.Figure()
+for col in range(1,df.width):
+    fig.add_trace(go.Scatter(
+        x=df["Years"], 
+        y=df[df.columns[col]],
+        name = df.columns[col],
+        mode = 'markers+lines',
+        line=dict(shape='linear'),
+        connectgaps=True))
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Remesas por Año: % Respecto al PIB'
+    )
+fig.update_layout(legend=dict(
+    yanchor="top",
+    y=0.99,
+    xanchor="left",
+    x=0.01))
+fig
+```
+
+## Evolución Histórica de las Remesas Familiares en Honduras
+
+```{python}
+#| label: fig-3
+#| fig-cap: Ingreso de Divisas (Millones de USD), Representatividad. *Transferencias corrientes respecto de los ingresos totales por divisas generalmente mayor a 40%; en los últimos meses de 2023 alcanzaron más del 50%.*
+#| warning: false
+
+df = pl.read_csv(
+        "https://www.bch.hn/estadisticos/DIE/Reportes/database.csv",
+        # "C:\IE\GitHub\BCH_Webpage-main\data\database.csv",
+        separator=";",
+        infer_schema_length=0
+    ).filter(
+        pl.col("Periodicidad") == "Mensual",
+        pl.col("Sector") == "Externo",
+        pl.col("Variable").is_in(
+            ["01.01 Bienes",
+            "01.02 Servicios",
+            "01.03 RENTA",
+            "01.04 TRANSFERENCIAS CORRIENTES",
+            "01.05 MOVIMIENTOS DE CAPITAL Y FINANCIEROS"
+            ])
+    ).select(
+        "Fechas", "Variable", "Valores"
+    ).with_columns(
+        pl.col("Fechas").str.to_date(format='%d/%m/%Y').alias('Fechas')
+    # ).with_columns(
+    #     pl.col("Fechas").cast(pl.Date, strict=False)
+    ).with_columns(
+        pl.col("Valores").cast(pl.Float64, strict=False)
+    ).filter(
+        pl.col("Fechas") >= datetime.strptime("2020-01-01", '%Y-%m-%d').date()
+    )
+df
+
+fig = px.bar(
+    df, 
+    x="Fechas", 
+    y="Valores", 
+    color="Variable",
+    # 
+        )
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Ingreso de Divisas, Representatividad'
+    )
+fig.update_layout(
+    legend=dict(
+        yanchor="top",
+        y=0.99,
+        xanchor="left",
+        x=0.01),
+    )
+fig.update_xaxes(title=None)
+fig.update_yaxes(title=None)
+fig
+```
+
+---
+
+```{python}
+#| label: fig-4
+#| fig-cap: Ingresos por Remesas (Millones de USD). *Tendencia lineal desde enero 2000 hasta junio 2008, con un breve intervalo de decrecimiento desde 2008 hasta 2009. A partir 2010, estacionalidad consistente y crecimiento casi exponencial.*
+#| warning: false
+
+df = pl.read_csv(
+        "https://www.bch.hn/estadisticos/DIE/Reportes/database.csv",
+        # "C:\IE\GitHub\BCH_Webpage-main\data\database.csv",
+        separator=";",
+        infer_schema_length=0
+    ).filter(
+        pl.col("Periodicidad") == "Mensual",
+        pl.col("Sector") == "Externo",
+        pl.col("Variable").is_in(
+            ["01.04.03 Remesas Familiares"
+            ])
+    ).select(
+        "Fechas","Variable","Valores"
+    ).with_columns(
+        pl.col("Fechas").str.to_date(format='%d/%m/%Y').alias('Fechas')
+    # ).with_columns(
+    #     pl.col("Fechas").cast(pl.Date, strict=False)
+    ).with_columns(
+        pl.col("Valores").cast(pl.Float64, strict=False)
+    )
+df
+
+fig = go.Figure()
+fig.add_trace(
+    go.Scatter(
+        x=df['Fechas'], 
+        y=df['Valores'],
+        # mode = 'markers+lines'),
+        line=dict(color="#CD5C5C")
+    ))
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Ingreso de Divisas, Representatividad'
+    )
+fig.update_traces(
+    marker_color = '#CD5C5C',
+    marker_line_width = 0,
+    selector=dict(type="line"))
+fig
+```
+
+---
+
+```{python}
+#| label: fig-5
+#| fig-cap: Remesas por Año (Millones de USD). *A partir de 2007, el año con mayor crecimiento (28.4%) es 2021. Solamente en 2009 se registró crecimiento negativo (-11.2%); en 2020 (3.97%), el decrecimiento de los primeros meses fue comensado por mayores ingresos en el resto del año.*
+#| warning: false
+
+df_0 = df.with_columns(
+    pl.col("Fechas").dt.year().alias("Year")
+    ).group_by(
+        ["Year"]
+    ).agg(
+        pl.col("Valores").sum().alias("Valores")
+    ).sort("Year"
+    ).with_columns(
+        (pl.col('Valores') / pl.col('Valores').shift(1,fill_value=0.0) * 100 - 100).alias('D_Valores') 
+    ).filter(
+        pl.col("Year") <= 2023
+    )
+
+color_discrete_sequence = ['#CD5C5C']*len(df_0)
+fig = px.bar(
+    df_0, 
+    x="Year", 
+    y="Valores", 
+    color_discrete_sequence=color_discrete_sequence,
+        )
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Ingreso de Divisas, Representatividad'
+    )
+fig.update_layout(
+    legend=dict(
+        yanchor="top",
+        y=0.99,
+        xanchor="left",
+        x=0.01),
+    )
+fig.update_xaxes(title=None)
+fig.update_yaxes(title=None)
+fig
+```
+
+---
+
+```{python}
+#| label: fig-6
+#| fig-cap: Remesas por Año y Mes (Millones de USD). *Con excepción de 2020, en el resto de los años se observa un comportamiento marcadamente estacional, con los valores más altos durante mayo y diciembre.*
+#| warning: false
+
+df_table = df.with_columns(
+        pl.col('Fechas')
+    ).with_columns(
+        Years=pl.col('Fechas').dt.strftime('%Y'),
+        Months=pl.col('Fechas').dt.strftime('%m'))
+df_table = df_table.with_columns(
+        pl.col('Years').cast(pl.Int64, strict=False),
+        pl.col('Months').cast(pl.Int64, strict=False)
+    ).select("Years","Months","Valores"
+    ).pivot(
+        index="Months", 
+        columns="Years", 
+        values="Valores", 
+        aggregate_function="sum"
+    ).sort(
+        ["Months"], descending=False
+    )#.select(
+        # "Years","1","2","3","4","5","6","7","8","9","10","11","12")
+df_table
+
+fig = go.Figure()
+for col in df_table.columns[15:23]:
+    fig.add_trace(go.Scatter(
+        x=df_table["Months"], 
+        y=df_table[col],
+        name = col,
+        mode = 'markers+lines',
+        line=dict(shape='linear'),
+        connectgaps=True))
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Remesas por Mes y Año: Millones de USD'
+    )
+fig
+```
+
+## Antecedentes y Motivación
+
+- Desde 2006, [Encuesta Semestral de Remesas Familiares](https://www.bch.hn/estadisticas-y-publicaciones-economicas/sector-externo/informes-y-publicaciones/resultado-de-encuesta-semestral-de-remesas-familiares), con datos del perfil de los inmigrantes (género, país de residencia, tiempo de residencia, nivel educativo, ocupación), beneficiarios y utilizacion de las remesas.
+- Al ser obtenida mediante muestreo (menos de 1,000 inmigrantes) en días específicos, podría no ser representativa de las transacciones de remesas durante el año.
+
+---
+
+- BCH recibe transacciones de los agentes cambiarios, se almacenan en "BALCAM". 
+- Consultas diseñadas para usos específicos: reportes remitidos al Comité de Divisas y estadísticas de política cambiaria.
+- BALCAM (más de 200 millones de transacciones) para generar reportes que evalúan los ingresos por remesas a nivel de transacciones por individuo, usando los números de identidad registrados.
+- Características demográficas de las personas que cobran las remesas en Honduras, como el lugar de nacimiento.
+
+## Depuración de Archivos de Texto
+
+- Consultas a archivos en formato de texto (.csv) generados desde BALCAM. 
+- Unir archivos de texto mensuales en un solo archivo con formato .csv, con un procedimiento en Julia:
+
+1. Integrar cada archivo .csv en un data.frame por cada mes.
+2. Agrupar datos mensuales en un solo archivo por año.
+3. Consolidar los datos anuales en un solo archivo y agregar campos.
+
+---
+
+- Campo "Identificacion", permitiría obtener el Departamento y Municipio de nacimiento.
+- Información desde enero 2017 hasta diciembre 2023.
+- En años previos a 2017, los agentes cambiarios presentaban muchas transacciones en forma consolidada por agencia, por lo que no es factible el análisis utilizando el número de identidad.
+
+---
+
+## Personas
+
+- Datos a nivel de personas, agrupando por número de identidad y obteniendo información sobre departamento y municipio de nacimiento.
+- Solamente se podía obtener estadística a nivel de transacciones.
+- Existe un alto desplazamiento desde el resto de los departamentos hacia Cortés y Francisco Morazán (correlacionado con los municipios principales, Distrito Central y San Pedro Sula), en vista que el porcentaje de municipios en el que se realiza la transacción no coincide en ocasiones con el municipio de nacimiento del beneficiario.
+
+```{python}
+# Ejecutar primero todo el archivo "Balcam_Remesas_Personas.qmd"
+wd = "//srvfs02/IE/Departamento/Balcam/"
+wd_remesas_all = wd + "Resultados/01_Remesas/"
+wd_creditos = "//srvfs02/Departamento de Investigacion Economica/Departamento/Créditos/Resultados/Year/"
+wd_all = wd + "Resultados/00_All/"
+wd_save = wd + "Choques_Fiscales_Remesas/"
+wd_plots = "C:/IE/Choques Fiscales/Figuras/"
+
+col_int = [
+  "Years","Months","Departamento","Municipio","Pais","Nacim","Edad"]
+col_float = ["Monto"]
+col_date = ["Mes"]
+df = pl.read_csv(
+        wd_save + "Balcam_Remesas_RTN_valid.csv",
+        separator=";",
+        infer_schema_length=0
+    ).with_columns(
+        pl.col(col_int).cast(pl.Int32, strict=False)
+    ).with_columns(
+        pl.col(col_float).cast(pl.Float64, strict=False)
+    ).with_columns(
+        pl.col(col_date).cast(pl.Date, strict=False)
+    ).filter(
+        pl.col("Years") <= 2023)
+
+df_id = df.group_by(
+        ["RTN_Identidad","Months","Years","Mes","Edad","Depto","Munic"]
+    ).agg(
+        pl.col("Monto").sum().alias("Monto")
+    # Esta variable ayuda a unir los parámetros que se crean posteriormente: N_Months_Year
+    ).with_columns(
+        pl.concat_str(
+            [pl.col("RTN_Identidad"),pl.col("Years"),],
+            separator="_",
+            ).alias("RTN_Years"),
+    ).sort(
+        ["RTN_Identidad"], descending=False)
+
+# Este DataFrame cuenta por ID, cuántos meses una persona recibió remesas durante 2017-2023(N_Months)
+df_id_count_months = df_id.group_by(
+        ["RTN_Identidad"]
+    ).len().rename({"len": "N_Months"}
+    ).sort(
+        ["RTN_Identidad"], descending=False)
+df_id_all = df_id.join(
+        df_id_count_months, 
+        left_on=["RTN_Identidad"], right_on=["RTN_Identidad"], 
+        how="left")
+del df_id,df_id_count_months
+# Prueba
+# df_id_all.group_by(
+#         ["N_Months"]
+#     ).agg(
+#         pl.col("Monto").sum().alias("Monto")
+#     ).sort(
+#         ["N_Months"], descending=False)
+
+# # Este DataFrame cuenta por ID, cuántos meses en cada año una persona recibió remesas (N_Months_Year)
+df_id_count_months_year = df_id_all.group_by(
+        ["RTN_Identidad","Months","Years"]
+    ).agg(
+        pl.col("Monto").sum().alias("Monto")
+    ).group_by(
+        ["Years","RTN_Identidad"]
+    ).len().rename({"len": "N_Months_Year"}
+    ).with_columns(
+        pl.concat_str(
+            [pl.col("RTN_Identidad"),pl.col("Years"),],
+            separator="_",
+            ).alias("RTN_Years"),
+    ).drop(
+        ["RTN_Identidad", "Years"]
+    ).sort(
+        ["RTN_Years"], descending=False)
+df_id_all = df_id_all.join(
+        df_id_count_months_year, 
+        left_on=["RTN_Years"], right_on=["RTN_Years"], 
+        how="left"
+    ).drop(
+        ["RTN_Years"])
+del df_id_count_months_year
+# # Prueba
+# df_id_all.group_by(
+#         ["N_Months_Year"]
+#     ).agg(
+#         pl.col("Monto").sum().alias("Monto"))
+
+# Este DataFrame cuenta por ID, cuántos años una persona recibió remesas (N_Years)
+df_id_count_years = df_id_all.group_by(
+        ["RTN_Identidad","Years"]
+    ).agg(
+        pl.col("Monto").sum().alias("Monto")
+    ).group_by(
+        ["RTN_Identidad"]
+    ).len().rename({"len": "N_Years"}
+    ).sort(
+        ["RTN_Identidad"], descending=False)
+df_id_all = df_id_all.join(
+    df_id_count_years, 
+    left_on=["RTN_Identidad"], right_on=["RTN_Identidad"], 
+    how="left")
+del df_id_count_years
+# # Prueba
+# df_id_all.group_by(
+#         ["N_Years"]
+#     ).agg(
+#         pl.col("Monto").sum().alias("Monto"))
+
+# Se agrupa primero porque una persona puede cobrar en varios departamentos
+df_munic = df.group_by(
+        ["RTN_Identidad","Depto","Munic","Departamento","Municipio"]
+    ).agg(
+        pl.col("Monto").sum().alias("Monto"),
+        pl.col("Monto").len().alias("N")
+    ).sort(
+        ["RTN_Identidad","N"], descending=[False,True]
+    ).group_by('RTN_Identidad'
+    ).agg([
+    pl.all().sort_by('N').max(),]
+    ).select("RTN_Identidad","Departamento","Municipio")
+df_munic.write_csv(
+        "C:/IE/Choques Fiscales/data/Rem_Munic_Transacc.csv",
+        separator=";") 
+
+# Agregar municipio de mayor frecuencia de cobro por ID
+df_id_all = df_id_all.join(
+    df_munic, 
+    left_on=["RTN_Identidad"], right_on=["RTN_Identidad"], 
+    how="left")
+
+# df_cod_munic = pl.read_csv(
+#         "C:/IE/Choques Fiscales/data/codigos_muni.csv",
+#         separator=";",
+#         infer_schema_length=0
+#     ).with_columns(
+#         pl.col("muni","dc","sps","resto_urbano","rural").cast(pl.Int32, strict=False))
+# df_id_all = df_id_all.join(
+#         df_cod_munic, 
+#         left_on=["Municipio"], right_on=["muni"], 
+#         how="left")
+
+del df,df_munic
+```
+
+---
+
+```{python}
+#| label: fig-7
+#| fig-cap: Deptos. *Francisco Morazán y Cortés concentran la mayor parte de las personas, por tanto la fila correspondiente a estos departamentos es la que más resalta, seguidos de Atlántida.*
+#| warning: false
+
+# Ejecutar primero todo el archivo "Balcam_Remesas_Personas.qmd"
+df_deptos = df_id_all.group_by(
+        ["Depto","Departamento"]#, maintain_order=True
+    ).agg(
+        pl.col("RTN_Identidad").n_unique().alias("N_Personas"),
+        pl.col("Monto").sum().alias("Monto"),
+    ).with_columns(
+        pl.col('Departamento').cast(pl.String, strict=False)
+    ).sort(
+        ["Depto"], descending=False
+    )#.pivot(
+        # index='Depto', 
+        # columns='Departamento',
+        # values='N_Personas')
+# df_deptos = pd.DataFrame(df_deptos).select(1:18)
+dic_Depto = {
+    '01':'Atlántida',
+    '02':'Colón',
+    '03':'Comayagua',
+    '04':'Copán',
+    '05':'Cortés',
+    '06':'Choluteca',
+    '07':'El Paraíso',
+    '08':'Francisco Morazán',
+    '09':'Gracias a Dios',
+    '10':'Intibucá',
+    '11':'Islas de la Bahía',
+    '12':'La Paz',
+    '13':'Lempira',
+    '14':'Ocotepeque',
+    '15':'Olancho',
+    '16':'Santa Bárbara',
+    '17':'Valle',
+    '18':'Yoro'
+    }
+dic_Departamento = {
+    '10':'Intibucá',
+    '11':'Islas de la Bahía',
+    '12':'La Paz',
+    '13':'Lempira',
+    '14':'Ocotepeque',
+    '15':'Olancho',
+    '16':'Santa Bárbara',
+    '17':'Valle',
+    '18':'Yoro',
+    '1':'Atlántida',
+    '2':'Colón',
+    '3':'Comayagua',
+    '4':'Copán',
+    '5':'Cortés',
+    '6':'Choluteca',
+    '7':'El Paraíso',
+    '8':'Francisco Morazán',
+    '9':'Gracias a Dios'
+    }
+
+for old, new in dic_Depto.items():
+    df_deptos = df_deptos.with_columns(
+        pl.col('Depto').str.replace_all(old, new))
+for old, new in dic_Departamento.items():
+    df_deptos = df_deptos.with_columns(
+        pl.col('Departamento').str.replace_all(old, new))
+df_deptos = pd.DataFrame(df_deptos)
+df_deptos.columns = ["Depto_Nacim","Depto_Cobro","N_Personas","Monto"]
+
+fig = px.imshow(df_deptos.pivot(
+        index='Depto_Cobro', 
+        columns='Depto_Nacim',
+        values='N_Personas'))
+fig.update_layout(
+    # coloraxis_showscale=False,
+    coloraxis = {'colorscale':'amp'},
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    # title = 'Remesas por Mes y Año: Millones de USD'
+    )
+fig
+```
+
+## Distribución de Personas, por Año
+
+- El crecimiento del número de beneficiarios durante los años en estudio fue cercano al 10% en todos los años (con excepción de 2020).
+- Durante 2021, el crecimiento en los montos fue mayor al del crecimiento en el número de personas, lo que implica que en promedio se aumentaron los montos recibidos por persona durante ese año.
+- Cerca de cuatro (4) millones de personas han cobrado remesas durante 2017-2023; este dato no se obtuvo por suma de personas por año, sino contando el número de personas distintas beneficiarias en estos años.
+
+## Periodicidad de Envío
+
+- En la última encuesta semestral de remesas familiares, las consultas sugieren que más del 50% de los envíos de remesas se realizan con una frecuencia mensual con un monto promedio cercano a los USD500.00. Esto puede contrastarse con la información de la base de datos, ver siguientes dos gráficos.
+- En cuanto a la distribución de montos recibidos por mes, predominan los valores múltiplos de 50, siendo los montos menores a USD250.00 los más representativos.
+
+---
+
+```{python}
+#| label: fig-8
+#| fig-cap: Remesas, Monto y No. de Meses (2017-2023). *Número de personas de acuerdo a la recepción mensual se comporta como un decrecimiento exponencial; es mayor el número de personas que recibieron solo durante un mes. En cuanto a los montos recibidos, es creciente hasta los 25 meses, luego es similar entre 26 y 75 meses y luego crece exponencialmente hasta los montos de personas que reciben todos los meses.*
+#| warning: false
+
+df_table = df_id_all.group_by(
+        ["N_Months"]
+    ).agg(
+        pl.col("Monto").sum().alias("USD_Millones"),
+        pl.col("RTN_Identidad").n_unique().alias("Personas_Miles")
+    ).with_columns(
+        (pl.col('Personas_Miles') / 1000).alias('Personas_Miles')
+    ).sort(
+        ["N_Months"], descending=True
+    ).with_columns(
+        (pl.col('USD_Millones') / 1000000).alias('USD_Millones'))
+# print(df_table["Personas"].sum()) # Prueba de consistencia
+# print(df_table["USD_Millones"].sum()) # Prueba de consistencia
+
+fig = make_subplots(
+    specs=[[{"secondary_y": True}]])
+# Barras
+fig.add_trace(
+    go.Bar(
+        x=df_table['N_Months'], 
+        y=df_table['USD_Millones'],
+        opacity=0.5))
+# Líneas
+fig.add_trace(
+    go.Scatter(
+        x=df_table['N_Months'], 
+        y=df_table['Personas_Miles'],
+        mode = 'markers+lines'),
+    secondary_y=True)
+fig.update_traces(
+    marker_color = '#CD5C5C',
+    marker_line_width = 0,
+    selector=dict(type="bar"))
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500,
+    template = 'plotly_white',
+    showlegend=False,
+    # title = 'Remesas: Monto y No. de Meses (2017-2023)'
+    )
+# Set y-axes titles
+fig.update_yaxes(
+    title_text="<b>barras: </b>Millones de USD",
+    range=[0,1200], 
+    secondary_y=True)
+fig.update_yaxes(
+    title_text="<b>línea: </b>Miles de personas",
+    range=[0,1200], 
+    secondary_y=False)
+fig.write_html(wd_plots + "NMonths_Periodo_Monto_Personas.html")
+fig
+```
+
+---
+
+```{python}
+#| label: fig-9
+#| fig-cap: Remesas, Rangos por Monto. *la concentración se encuentra en rangos debajo de USD500.00; igualmente, se nota un decrecimiento similar al exponencial, que se revierte levemente hasta el último tramo de la distribución (montos mayores a USD4,000.00).*
+#| warning: false
+
+n_year = 2017
+df_plot = df_id_all.select(
+    ["RTN_Identidad","Years","Monto"]).filter(
+    # pl.col("Monto") >= -50.0,
+    # pl.col("Monto") <= 4000.0,
+    pl.col("Years") == n_year)
+bins = range(0,4250,250)
+cut = df_plot['Monto'].cut(bins, include_breaks=True).alias("cut")
+df_plot = df_plot['Monto'].to_frame().with_columns(cut).unnest("cut")
+
+grupos = df_plot.group_by(["category","break_point"]
+    ).agg(
+    pl.col("category").len().alias(str(n_year)),
+    ).sort(
+    "break_point",descending=False
+    ).rename({"category": "Rangos"}
+    ).drop("break_point"
+    ).with_columns(
+        (pl.col(str(n_year)) / 1000).alias(str(n_year)))
+
+for n_year in range(2018,2024):
+    df_plot = df_id_all.select(
+        ["RTN_Identidad","Years","Monto"]).filter(
+        # pl.col("Monto") >= -50.0,
+        # pl.col("Monto") <= 4000.0,
+        pl.col("Years") == n_year)
+    bins = range(0,4500,250)
+    cut = df_plot['Monto'].cut(bins, include_breaks=True).alias("cut")
+    df_plot = df_plot['Monto'].to_frame().with_columns(cut).unnest("cut")
+
+    g = df_plot.group_by(["category","break_point"]
+        ).agg(
+        pl.col("category").len().alias(str(n_year)),
+        ).sort(
+        "break_point",descending=False
+        ).rename({"category": "Rangos"}
+        ).drop("break_point"
+        ).with_columns(
+            (pl.col(str(n_year)) / 1000).alias(str(n_year)))
+    grupos = pl.concat([grupos, pl.DataFrame(g[:,1])], how="horizontal")
+
+fig = go.Figure()
+for col in grupos.columns[1:8]:
+    fig.add_trace(go.Scatter(
+        x=grupos["Rangos"], 
+        y=grupos[col],
+        name = col,
+        mode = 'markers+lines',
+        line=dict(shape='linear'),
+        connectgaps=True))
+fig.update_layout(
+    template = 'plotly_white',
+    # title = 'Remesas por Año: Transacciones (Miles) por Rango de Montos'
+    )
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500)
+fig.update_layout(legend=dict(
+    yanchor="top",
+    y=0.9,
+    xanchor="right",
+    x=0.8))
+fig.write_html(wd_plots + "Rango_Montos_Years.html")
+fig
+```
+
+---
+
+```{python}
+#| label: fig-10
+#| fig-cap: Remesas por Mes, Número de Personas. *Por año, una persona puede recibir remesas solo un mes o todos los 12 meses. En cada año, es mayor el número de personas que reciben solamente una vez en el año.*
+#| warning: false
+
+df_stat_n_year = df_id_all.with_columns(
+    pl.col("N_Months_Year").cast(
+        pl.String).cast(
+        pl.Categorical(ordering='lexical'))
+    ).group_by(
+        ["Years","N_Months_Year"]
+    ).agg(
+        pl.col("RTN_Identidad").n_unique().alias("Personas_Miles")
+    ).with_columns(
+        (pl.col('Personas_Miles') / 1000).alias('Personas_Miles')
+    ).pivot(
+        index="N_Months_Year", 
+        columns="Years", 
+        values="Personas_Miles", 
+        aggregate_function="sum"
+    ).sort(
+        ["N_Months_Year"], descending=False
+    ).select("N_Months_Year","2017","2018","2019","2020","2021","2022","2023"
+    ).with_columns(pl.col("N_Months_Year").cast(pl.Utf8).cast(pl.Int64)
+    ).sort("N_Months_Year")
+
+fig = go.Figure()
+for col in df_stat_n_year.columns[1:8]:
+    fig.add_trace(go.Scatter(
+        x=df_stat_n_year["N_Months_Year"], 
+        y=df_stat_n_year[col],
+        name = col,
+        mode = 'markers+lines',
+        line=dict(shape='linear'),
+        connectgaps=True))
+fig.update_layout(
+    template = 'plotly_white',
+    # title = 'Remesas por Número de Meses y Año: Miles de Personas'
+    )
+fig.update_layout(
+    autosize=False,
+    width=800,
+    height=500)
+fig.update_layout(legend=dict(
+    yanchor="top",
+    y=0.9,
+    xanchor="right",
+    x=0.8))
+fig.write_html(wd_plots + "N_Months_Years_Personas.html")
+fig
+```
+
+---
+
+```{python}
+#| label: fig-11
+#| fig-cap: Recepción de Remesas Solo Un Mes en el Año. *Los montos se concentran en rangos menores a USD500.00, particularmente en envíos de los rangos USD0.00 a USD50.00 y USD50.00 a USD100.00. Resalta la reducción de transacciones en el primer rango (USD0.00 a USD50.00) a partir de 2020, compensada por el aumento en el rango de USD100.00 a USD150.00. *
+#| warning: false
+
+n_year = 2017
+df_hist = df_id_all.select(
+    ["Monto","Years","N_Months_Year"]).filter(
+    pl.col("Years") == n_year,
+    pl.col("N_Months_Year") == 1)
+
+bins = range(0,550,50)
+cut = df_hist['Monto'].cut(bins, include_breaks=True).alias("cut")
+df_hist = df_hist['Monto'].to_frame().with_columns(cut).unnest("cut")
+
+grupos = df_hist.group_by(["category","break_point"]
+    ).agg(
+        pl.col("category").len().alias(str(n_year)),
+    ).sort(
+        "break_point",descending=False
+    ).rename({"category": "Rangos"}
+    ).drop("break_point"
+    ).with_columns(
+        (pl.col(str(n_year)) / 1000).alias(str(n_year))
+    ).select("Rangos",str(n_year))
+
+for n_year in range(2018,2024):
+    df_hist = df_id_all.select(
+        ["Monto","Years","N_Months_Year"]).filter(
+        pl.col("Years") == n_year,
+        pl.col("N_Months_Year") == 1)
+    bins = range(0,550,50)
+    cut = df_hist['Monto'].cut(bins, include_breaks=True).alias("cut")
+    df_hist = df_hist['Monto'].to_frame().with_columns(cut).unnest("cut")
+
+    g = df_hist.group_by(["category","break_point"]
+        ).agg(
+            pl.col("category").len().alias(str(n_year)),
+        ).sort(
+            "break_point",descending=False
+        ).rename({"category": "Rangos"}
+        ).drop("break_point"
+        ).with_columns(
+            (pl.col(str(n_year)) / 1000).alias(str(n_year))
+        ).select("Rangos",str(n_year))
+    grupos = pl.concat([grupos, pl.DataFrame(g[:,1])], how="horizontal")
+
+fig = go.Figure()
+for col in grupos.columns[1:8]:
+    fig.add_trace(go.Bar(
+        x=grupos["Rangos"], 
+        y=grupos[col],
+        name = col))
+fig.update_layout(
+    template = 'plotly_white',
+    # title = 'Recepción de Remesas Solo Un Mes en el Año, por Año',
+    xaxis_title="Rangos de Monto", 
+    yaxis_title="Miles de Transacciones",)
+fig.update_layout(legend=dict(
+    yanchor="top",
+    y=0.9,
+    xanchor="right",
+    x=0.8))
+fig.update_layout(
+    autosize=False,
+    width=700,
+    height=500)
+fig.write_html(wd_plots + "Rango_Montos_Years_NMeses_Year_01.html")
+fig
+```
+
+---
+
+```{python}
+#| label: fig-12
+#| fig-cap: Recepción de Remesas Todos los Meses. *La distribución de montos está concentrada en valores menores a USD2,000.00. En 2020 se refleja un decrecimiento (durante marzo-mayo de ese año se redujo la recepción de remesas por a la pandemia); a partir de dicho año, se recupera la tendencia creciente que se había observado en años previos. Para todos los años, el intervalo de recepción de remesas más alto corresponde a los montos mensuales entre USD250.00 y USD500.00.*
+#| warning: false
+
+n_year = 2017
+df_hist = df_id_all.select(
+    ["Monto","Years","N_Months_Year"]).filter(
+    pl.col("Years") == n_year,
+    pl.col("N_Months_Year") == 12)
+
+bins = range(0,2750,250)
+cut = df_hist['Monto'].cut(bins, include_breaks=True).alias("cut")
+df_hist = df_hist['Monto'].to_frame().with_columns(cut).unnest("cut")
+
+grupos = df_hist.group_by(["category","break_point"]
+    ).agg(
+        pl.col("category").len().alias(str(n_year)),
+    ).sort(
+        "break_point",descending=False
+    ).rename({"category": "Rangos"}
+    ).drop("break_point"
+    ).with_columns(
+        (pl.col(str(n_year)) / 1000).alias(str(n_year))
+    ).select("Rangos",str(n_year))
+
+for n_year in range(2018,2024):
+    df_hist = df_id_all.select(
+        ["Monto","Years","N_Months_Year"]).filter(
+        pl.col("Years") == n_year,
+        pl.col("N_Months_Year") == 12)
+    bins = range(0,2750,250)
+    cut = df_hist['Monto'].cut(bins, include_breaks=True).alias("cut")
+    df_hist = df_hist['Monto'].to_frame().with_columns(cut).unnest("cut")
+
+    g = df_hist.group_by(["category","break_point"]
+        ).agg(
+            pl.col("category").len().alias(str(n_year)),
+        ).sort(
+            "break_point",descending=False
+        ).rename({"category": "Rangos"}
+        ).drop("break_point"
+        ).with_columns(
+            (pl.col(str(n_year)) / 1000).alias(str(n_year))
+        ).select("Rangos",str(n_year))
+    grupos = pl.concat([grupos, pl.DataFrame(g[:,1])], how="horizontal")
+
+fig = go.Figure()
+for col in grupos.columns[1:8]:
+    fig.add_trace(go.Bar(
+        x=grupos["Rangos"], 
+        y=grupos[col],
+        name = col))
+fig.update_layout(
+    template = 'plotly_white',
+    # title = 'Recepción de Remesas Todos los Meses, por Año',
+    xaxis_title="Rangos de Monto", 
+    yaxis_title="Miles de Transacciones",)
+fig.update_layout(legend=dict(
+    yanchor="top",
+    y=0.9,
+    xanchor="right",
+    x=0.8))
+fig.update_layout(
+    autosize=False,
+    width=700,
+    height=500)
+fig.write_html(wd_plots + "Rango_Montos_Years_NMeses_Year_01.html")
+fig
+```
+
+## Conclusiones
+
+- Mayor nivel de detalle y precisión que los generados por las encuestas.
+- Recepción de remesas (tanto en montos, número de transacciones y personas) se concentra en los departamentos con mayor densidad poblacional (Francisco Morazán y Cortés).
+- En cuanto a los departamentos en los que se cobran las remesas, también se muestra una concentración en Francisco Morazán y Cortés; migración que se da de los departamentos con menor creación de empleo hacia los que concentran las principales empresas? (sector público en el caso de Francisco Morazán e industrial en Cortés).
+- La mayoría de las personas reciben remesas entre 1 y 4 meses al año, representando un porcentaje menor al 10% las que reciben durante los 12 meses;
+-Respecto a montos por mes, la mayoría se concentra en valores menores a USD250.00.
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
+
+
+
+```{python}
+
+```
