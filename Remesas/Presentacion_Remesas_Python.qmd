@@ -49,7 +49,7 @@ from datetime import datetime
 from great_tables import GT, md, html, style, loc
 from IPython.display import display, Latex
 from plotly.subplots import make_subplots
-wd = "//srvfs02/IE/Departamento/Balcam/Resultados/Years/"
+wd = "//"
 ```
 
 ## Remesas en CARD
@@ -403,9 +403,9 @@ fig
 
 ```{python}
 # Ejecutar primero todo el archivo "Balcam_Remesas_Personas.qmd"
-wd = "//srvfs02/IE/Departamento/Balcam/"
+wd = "//"
 wd_remesas_all = wd + "Resultados/01_Remesas/"
-wd_creditos = "//srvfs02/Departamento de Investigacion Economica/Departamento/Créditos/Resultados/Year/"
+wd_creditos = "//"
 wd_all = wd + "Resultados/00_All/"
 wd_save = wd + "Choques_Fiscales_Remesas/"
 wd_plots = "C:/IE/Choques Fiscales/Figuras/"
